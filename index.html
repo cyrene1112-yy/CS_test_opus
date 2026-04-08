@@ -21,6 +21,21 @@ canvas { display: block; }
 #blocker h1 { font-size: 48px; margin-bottom: 16px; color: #f0c030; text-shadow: 2px 2px 4px #000; }
 #blocker p { font-size: 18px; color: #ccc; }
 #blocker .keys { margin-top: 20px; font-size: 14px; color: #999; line-height: 1.8; }
+#name-input {
+  display: block; margin: 16px auto 8px;
+  padding: 10px 16px; font-size: 18px;
+  background: rgba(255,255,255,0.1); border: 1px solid #666;
+  color: #fff; text-align: center; outline: none; border-radius: 4px;
+  width: 220px;
+}
+#name-input:focus { border-color: #f0c030; }
+#play-btn {
+  display: block; margin: 0 auto 8px;
+  padding: 10px 40px; font-size: 18px; cursor: pointer;
+  background: #f0c030; border: none; color: #000;
+  font-weight: bold; border-radius: 4px;
+  pointer-events: all;
+}
 
 /* HUD */
 #hud {
@@ -97,6 +112,16 @@ canvas { display: block; }
   pointer-events: all;
 }
 
+/* 死亡重生提示 */
+#respawn-overlay {
+  position: fixed; inset: 0; z-index: 200;
+  display: none; align-items: center; justify-content: center;
+  flex-direction: column; background: rgba(0,0,0,0.6); pointer-events: none;
+}
+#respawn-overlay.active { display: flex; }
+#respawn-title { color: #f33; font-size: 52px; font-weight: bold; margin-bottom: 12px; }
+#respawn-countdown { color: #ccc; font-size: 26px; }
+
 /* Reload indicator */
 #reload-bar-container {
   position: absolute; bottom: 60px; left: 50%; transform: translateX(-50%);
@@ -114,7 +139,8 @@ canvas { display: block; }
 <div id="blocker">
   <div class="content">
     <h1>CS CLONE</h1>
-    <p>Click to Play</p>
+    <input id="name-input" type="text" maxlength="16" placeholder="输入你的名字" autocomplete="off" />
+    <button id="play-btn">进入游戏</button>
     <div class="keys">
       WASD - Move &nbsp;|&nbsp; Mouse - Look &nbsp;|&nbsp; Click - Shoot<br>
       Space - Jump &nbsp;|&nbsp; R - Reload &nbsp;|&nbsp; Shift - Sprint
@@ -142,6 +168,11 @@ canvas { display: block; }
   <div id="reload-bar-container"><div id="reload-bar"></div></div>
 </div>
 
+<div id="respawn-overlay">
+  <div id="respawn-title">YOU DIED</div>
+  <div id="respawn-countdown">Respawning in 3...</div>
+</div>
+
 <div id="damage-flash"></div>
 
 <div id="gameover">
@@ -150,10 +181,15 @@ canvas { display: block; }
   <button id="restart-btn">Play Again</button>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script>
-(function() {
-  'use strict';
+<script type="module">
+// ─── 外部依赖 ───
+import * as THREE from 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.module.js';
+import * as InstantCore from 'https://esm.sh/@instantdb/core';
+
+// InstantDB App ID
+const INSTANT_APP_ID = 'f633fd9a-3334-4703-9104-a3ceb3e488b5';
+
+{
 
   // ─── Config ───
   const ARENA_SIZE = 50;
@@ -167,15 +203,8 @@ canvas { display: block; }
   const FIRE_RATE = 150;
   const MAG_SIZE = 30;
   const RELOAD_TIME = 2000;
-  const ENEMY_COUNT = 5;
-  const ENEMY_SPEED = 2.5;
-  const ENEMY_HP = 100;
-  const ENEMY_DMG = 8;
-  const ENEMY_ATTACK_RANGE = 2.5;
-  const ENEMY_ATTACK_CD = 800;
   const HEADSHOT_MULT = 2.5;
   const BODY_DMG = 25;
-  const RESPAWN_TIME = 3000;
 
   // ─── State ───
   let scene, camera, renderer, clock;
@@ -194,8 +223,18 @@ canvas { display: block; }
   let vmRecoil = 0;            // current recoil offset (0 = rest)
   let vmBobPhase = 0;          // walk bob phase
 
+  // ─── 多人状态 ───
+  const peerMeshes = {};       // { [peerId]: { mesh, alive, deathTime } }
+  const peerTargets = {};      // { [peerId]: { pos, ry, hp, alive } } 目标插值状态
+  let myPeerId = null;         // 本地玩家 InstantDB peer ID
+  let myName = 'Player';       // 本地玩家名字
+  let room = null;             // InstantDB room handle
+  let isDead = false;          // 本地玩家是否死亡
+  let deaths = 0;              // 死亡次数
+  let lastPresenceSync = 0;    // 上次 presence 同步时间戳（用于节流）
+  let lastHitBy = null;        // 最后一次击中我的玩家 { peerId, name }
+
   const keys = {};
-  const enemies = [];
   const obstacles = [];
   const playerPos = new THREE.Vector3(0, PLAYER_HEIGHT, 0);
   const euler = new THREE.Euler(0, 0, 0, 'YXZ');
@@ -343,7 +382,6 @@ canvas { display: block; }
     clock = new THREE.Clock();
 
     buildMap();
-    spawnAllEnemies();
     setupControls();
     createViewModel();
 
@@ -874,58 +912,11 @@ canvas { display: block; }
     return new THREE.Vector3(Math.random() * 10 - 5, 0, Math.random() * 10 - 5);
   }
 
-  function spawnEnemy() {
-    const mesh = createEnemyMesh();
-    const pos = getRandomSpawnPos();
-    mesh.position.copy(pos);
-    scene.add(mesh);
-
-    const enemy = {
-      mesh,
-      hp: ENEMY_HP,
-      alive: true,
-      lastAttack: 0,
-      walkPhase: Math.random() * Math.PI * 2,
-    };
-    enemies.push(enemy);
-    return enemy;
-  }
-
-  function spawnAllEnemies() {
-    for (let i = 0; i < ENEMY_COUNT; i++) spawnEnemy();
-  }
-
-  function respawnEnemy(enemy) {
-    const pos = getRandomSpawnPos();
-    enemy.mesh.position.copy(pos);
-    enemy.mesh.rotation.set(0, 0, 0);
-    enemy.mesh.scale.set(1, 1, 1);
-    enemy.mesh.visible = true;
-    enemy.hp = ENEMY_HP;
-    enemy.alive = true;
-    // Reset limb rotations
-    const lLeg = enemy.mesh.getObjectByName('leftLeg');
-    const rLeg = enemy.mesh.getObjectByName('rightLeg');
-    const lArm = enemy.mesh.getObjectByName('leftArm');
-    const rArm = enemy.mesh.getObjectByName('rightArm');
-    if (lLeg) lLeg.rotation.set(0, 0, 0);
-    if (rLeg) rLeg.rotation.set(0, 0, 0);
-    if (lArm) lArm.rotation.set(0, 0, 0);
-    if (rArm) rArm.rotation.set(-0.5, 0, 0);
-    // Reset material opacity from death fade
-    enemy.mesh.traverse(child => {
-      if (child.isMesh) {
-        child.material.transparent = false;
-        child.material.opacity = 1;
-      }
-    });
-    updateEnemyHPBar(enemy);
-  }
-
+  // 更新玩家头顶血条（多人模式复用）
   function updateEnemyHPBar(enemy) {
     const bar = enemy.mesh.getObjectByName('hpBar');
     if (bar) {
-      const pct = Math.max(0, enemy.hp / ENEMY_HP);
+      const pct = Math.max(0, enemy.hp / 100);
       bar.scale.x = pct;
       bar.position.x = -(0.56 * (1 - pct)) / 2;
       if (pct > 0.5) bar.material.color.setHex(0x00ff00);
@@ -937,11 +928,19 @@ canvas { display: block; }
   // ─── Controls ───
   function setupControls() {
     const blocker = document.getElementById('blocker');
-    const gameoverEl = document.getElementById('gameover');
 
-    blocker.addEventListener('click', () => {
+    // 点击"进入游戏"按钮：读取名字 → 初始化多人 → 请求指针锁定
+    document.getElementById('play-btn').addEventListener('click', () => {
+      const input = document.getElementById('name-input').value.trim();
+      myName = input || ('Player' + Math.floor(Math.random() * 1000));
       initAudio();
+      initMultiplayer();
       renderer.domElement.requestPointerLock();
+    });
+
+    // Enter 键也可以触发进入
+    document.getElementById('name-input').addEventListener('keydown', (e) => {
+      if (e.code === 'Enter') document.getElementById('play-btn').click();
     });
 
     document.addEventListener('pointerlockchange', () => {
@@ -950,7 +949,7 @@ canvas { display: block; }
     });
 
     document.addEventListener('mousemove', (e) => {
-      if (!isLocked || gameOver) return;
+      if (!isLocked || isDead) return;
       euler.y -= e.movementX * MOUSE_SENS;
       euler.x -= e.movementY * MOUSE_SENS;
       euler.x = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, euler.x));
@@ -958,7 +957,7 @@ canvas { display: block; }
     });
 
     document.addEventListener('mousedown', (e) => {
-      if (!isLocked || gameOver) return;
+      if (!isLocked || isDead) return;
       if (e.button === 0) shoot();
     });
 
@@ -967,13 +966,154 @@ canvas { display: block; }
       if (e.code === 'KeyR' && !isReloading && ammo < MAG_SIZE) startReload();
     });
     document.addEventListener('keyup', (e) => { keys[e.code] = false; });
+  }
 
-    document.getElementById('restart-btn').addEventListener('click', restartGame);
+  // ─── 多人：初始化 InstantDB 房间 ───
+  function initMultiplayer() {
+    const db = InstantCore.init({ appId: INSTANT_APP_ID });
+    // 所有玩家加入同一个房间 "game"
+    room = db.joinRoom('game', 'arena-1');
+
+    // 订阅 presence：感知同房间内所有玩家的状态变化
+    room.subscribePresence({}, (response) => {
+      if (response.isLoading) return;
+
+      // 记录自己的 peerId（首次获取）
+      if (response.user) myPeerId = response.user.peerId;
+
+      const currentIds = new Set(Object.keys(response.peers));
+      const trackedIds = new Set(Object.keys(peerMeshes));
+
+      // 新加入的玩家：创建 mesh 并加入场景
+      for (const [peerId, peer] of Object.entries(response.peers)) {
+        if (!peerMeshes[peerId]) {
+          const mesh = createEnemyMesh();
+          const spawnPos = getRandomSpawnPos();
+          mesh.position.set(spawnPos.x, 0, spawnPos.z);
+          scene.add(mesh);
+          peerMeshes[peerId] = { mesh, alive: true, deathTime: 0 };
+        }
+        // 更新插值目标
+        peerTargets[peerId] = {
+          pos: new THREE.Vector3(peer.x ?? 0, (peer.y ?? PLAYER_HEIGHT) - PLAYER_HEIGHT, peer.z ?? 0),
+          ry:  peer.ry  ?? 0,
+          hp:  peer.hp  ?? 100,
+          alive: peer.alive !== false,
+        };
+      }
+
+      // 离开的玩家：从场景移除
+      for (const peerId of trackedIds) {
+        if (!currentIds.has(peerId)) {
+          scene.remove(peerMeshes[peerId].mesh);
+          delete peerMeshes[peerId];
+          delete peerTargets[peerId];
+        }
+      }
+    });
+
+    // 订阅 hit topic：收到命中事件后自己扣血
+    room.subscribeTopic('hit', (event, senderPresence) => {
+      if (event.targetId !== myPeerId) return;
+      if (isDead) return;
+      // 记录击中我的玩家，用于死亡时发 kill 事件
+      lastHitBy = { peerId: senderPresence.peerId, name: senderPresence.name || 'Unknown' };
+      damagePlayer(event.damage);
+    });
+
+    // 订阅 kill topic：用于更新击杀数和显示
+    room.subscribeTopic('kill', (event) => {
+      // 如果我是击杀者，增加 kills 计数
+      if (event.killerPeerId === myPeerId) {
+        kills++;
+        updateKillDisplay();
+        playKillSound();
+      }
+    });
+  }
+
+  // ─── 多人：每帧更新远端玩家 mesh（插值 + 血条 + 死亡动画）───
+  function updatePeers(dt) {
+    for (const [peerId, peer] of Object.entries(peerMeshes)) {
+      const target = peerTargets[peerId];
+      if (!target) continue;
+
+      // 检测存活状态变化
+      const justDied    = peer.alive && !target.alive;
+      const justRespawn = !peer.alive && target.alive;
+
+      if (justDied) {
+        // 开始死亡动画
+        peer.alive = false;
+        peer.deathTime = performance.now();
+      }
+
+      if (justRespawn) {
+        // 重生：瞬间移至新位置，重置 mesh
+        peer.alive = true;
+        peer.mesh.visible = true;
+        peer.mesh.rotation.set(0, target.ry, 0);
+        peer.mesh.position.copy(target.pos);
+        peer.mesh.traverse(child => {
+          if (child.isMesh) { child.material.transparent = false; child.material.opacity = 1; }
+        });
+      }
+
+      if (peer.alive) {
+        // 位置朝向插值（平滑移动）
+        peer.mesh.position.lerp(target.pos, Math.min(dt * 15, 1));
+        // 水平朝向插值
+        let diff = target.ry - peer.mesh.rotation.y;
+        while (diff >  Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        peer.mesh.rotation.y += diff * Math.min(dt * 15, 1);
+
+        // 血条面向摄像机
+        const hpBar = peer.mesh.getObjectByName('hpBar');
+        const hpBg  = peer.mesh.getObjectByName('hpBg');
+        if (hpBar) hpBar.lookAt(camera.position);
+        if (hpBg)  hpBg.lookAt(camera.position);
+
+        // 更新血条百分比
+        updateEnemyHPBar({ mesh: peer.mesh, hp: target.hp });
+      } else {
+        // 死亡动画：倒下并淡出
+        const elapsed = performance.now() - peer.deathTime;
+        const t = Math.min(elapsed / 1000, 1);
+        peer.mesh.rotation.x = t * (Math.PI / 2);
+        if (elapsed > 500) {
+          const opacity = 1 - (elapsed - 500) / 500;
+          peer.mesh.traverse(child => {
+            if (child.isMesh) { child.material.transparent = true; child.material.opacity = Math.max(0, opacity); }
+          });
+        }
+        if (elapsed > 1000) peer.mesh.visible = false;
+      }
+    }
+  }
+
+  // ─── 多人：同步本地玩家状态（50ms 节流）───
+  function syncPresence() {
+    if (!room) return;
+    const now = performance.now();
+    if (now - lastPresenceSync < 50) return;
+    lastPresenceSync = now;
+
+    // 发布本地玩家的位置、朝向、血量、存活状态
+    room.publishPresence({
+      name:  myName,
+      x:     playerPos.x,
+      y:     playerPos.y,
+      z:     playerPos.z,
+      ry:    euler.y,   // 水平朝向（用于远端玩家旋转）
+      hp:    playerHP,
+      alive: !isDead,
+    });
   }
 
   // ─── Shooting ───
   function shoot() {
-    if (gameOver || isReloading) return;
+    if (isDead || isReloading) return;
     const now = performance.now();
     if (now - lastFireTime < FIRE_RATE) return;
     if (ammo <= 0) { startReload(); return; }
@@ -985,53 +1125,44 @@ canvas { display: block; }
     createMuzzleFlash();
     triggerViewModelRecoil();
 
-    // Raycast
+    // ── Raycast 检测是否命中远端玩家 ──
     raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+
+    // 收集所有存活的远端玩家 mesh 子元素
     const meshes = [];
-    enemies.forEach(e => {
-      if (e.alive) e.mesh.traverse(child => { if (child.isMesh) meshes.push(child); });
-    });
+    for (const peer of Object.values(peerMeshes)) {
+      if (peer.alive) peer.mesh.traverse(child => { if (child.isMesh) meshes.push(child); });
+    }
 
     const hits = raycaster.intersectObjects(meshes);
     if (hits.length > 0) {
       const hit = hits[0];
-      // Find which enemy
-      let hitEnemy = null;
+
+      // 找出被击中的是哪个 peer
+      let hitPeerId = null;
       let isHeadshot = false;
-      for (const e of enemies) {
-        if (!e.alive) continue;
+      for (const [peerId, peer] of Object.entries(peerMeshes)) {
+        if (!peer.alive) continue;
         let found = false;
-        e.mesh.traverse(child => {
-          if (child === hit.object) found = true;
-        });
+        peer.mesh.traverse(child => { if (child === hit.object) found = true; });
         if (found) {
-          hitEnemy = e;
-          // Check if hit object is inside the head group
-          const headGroup = e.mesh.getObjectByName('head');
-          if (headGroup) {
-            headGroup.traverse(child => {
-              if (child === hit.object) isHeadshot = true;
-            });
-          }
+          hitPeerId = peerId;
+          // 判断是否爆头
+          const headGroup = peer.mesh.getObjectByName('head');
+          if (headGroup) headGroup.traverse(child => { if (child === hit.object) isHeadshot = true; });
           break;
         }
       }
 
-      if (hitEnemy) {
+      if (hitPeerId) {
         const dmg = isHeadshot ? Math.round(BODY_DMG * HEADSHOT_MULT) : BODY_DMG;
-        hitEnemy.hp -= dmg;
+        // 本地反馈
         playHitSound();
         if (isHeadshot) playHeadshotSound();
         showHitmarker();
-
-        // Blood particle
         createBloodEffect(hit.point);
-
-        updateEnemyHPBar(hitEnemy);
-
-        if (hitEnemy.hp <= 0) {
-          killEnemy(hitEnemy);
-        }
+        // 通知目标扣血
+        room.publishTopic('hit', { targetId: hitPeerId, damage: dmg, isHeadshot });
       }
     }
 
@@ -1082,176 +1213,6 @@ canvas { display: block; }
     setTimeout(() => hm.style.opacity = '0', 100);
   }
 
-  function killEnemy(enemy) {
-    enemy.alive = false;
-    kills++;
-    playKillSound();
-    playDeathSound();
-    document.getElementById('kill-display').textContent = 'Kills: ' + kills;
-
-    const pos = enemy.mesh.position.clone();
-
-    // Hide the HP bars immediately
-    const hpBar = enemy.mesh.getObjectByName('hpBar');
-    const hpBg = enemy.mesh.getObjectByName('hpBg');
-    if (hpBar) hpBar.visible = false;
-    if (hpBg) hpBg.visible = false;
-
-    // ── Collect body parts and give each a velocity ──
-    const limbs = ['head', 'leftArm', 'rightArm', 'leftLeg', 'rightLeg'];
-    const partData = [];
-
-    limbs.forEach(name => {
-      const part = enemy.mesh.getObjectByName(name);
-      if (!part) return;
-      // Get world position of this part
-      const worldPos = new THREE.Vector3();
-      part.getWorldPosition(worldPos);
-      // Remove from enemy, add to scene as independent group clone
-      const clone = part.clone();
-      clone.position.copy(worldPos);
-      // Reset rotation to world
-      clone.rotation.copy(enemy.mesh.rotation);
-      scene.add(clone);
-      part.visible = false;
-      partData.push({
-        mesh: clone,
-        vel: new THREE.Vector3(
-          (Math.random() - 0.5) * 4,
-          3 + Math.random() * 3,
-          (Math.random() - 0.5) * 4
-        ),
-        rotVel: new THREE.Vector3(
-          (Math.random() - 0.5) * 10,
-          (Math.random() - 0.5) * 10,
-          (Math.random() - 0.5) * 10
-        ),
-      });
-    });
-
-    // Torso stays and falls with the main mesh
-    const torsoStartY = enemy.mesh.position.y;
-    const torsoStartRot = enemy.mesh.rotation.x;
-    // Random fall direction
-    const fallDir = Math.random() > 0.5 ? 1 : -1;
-    const fallAxis = Math.random() > 0.5 ? 'x' : 'z';
-
-    // ── Spawn death particles (box confetti) ──
-    const particles = [];
-    for (let i = 0; i < 15; i++) {
-      const size = 0.03 + Math.random() * 0.05;
-      const geo = new THREE.BoxGeometry(size, size, size);
-      const colors = [0xff2200, 0xff4400, 0xcc1100, 0xff6633, 0xaa0000];
-      const mat = new THREE.MeshBasicMaterial({ color: colors[Math.floor(Math.random() * colors.length)] });
-      const p = new THREE.Mesh(geo, mat);
-      p.position.copy(pos);
-      p.position.y += 0.8 + Math.random() * 0.6;
-      scene.add(p);
-      particles.push({
-        mesh: p,
-        vel: new THREE.Vector3(
-          (Math.random() - 0.5) * 5,
-          2 + Math.random() * 4,
-          (Math.random() - 0.5) * 5
-        ),
-      });
-    }
-
-    // ── Animate everything ──
-    const startTime = performance.now();
-    const ANIM_DURATION = 1500;
-    const FADE_START = 1000;
-
-    function deathAnim() {
-      const elapsed = performance.now() - startTime;
-      const dt = 0.016;
-
-      if (elapsed > ANIM_DURATION) {
-        // Cleanup
-        enemy.mesh.visible = false;
-        partData.forEach(p => scene.remove(p.mesh));
-        particles.forEach(p => scene.remove(p.mesh));
-        // Restore hidden limbs for respawn
-        limbs.forEach(name => {
-          const part = enemy.mesh.getObjectByName(name);
-          if (part) part.visible = true;
-        });
-        if (hpBar) hpBar.visible = true;
-        if (hpBg) hpBg.visible = true;
-        setTimeout(() => respawnEnemy(enemy), RESPAWN_TIME);
-        return;
-      }
-
-      const t = elapsed / ANIM_DURATION; // 0..1
-
-      // Torso: fall over to ground
-      const fallT = Math.min(t * 2.5, 1);
-      const eased = 1 - Math.pow(1 - fallT, 2);
-      if (fallAxis === 'x') {
-        enemy.mesh.rotation.x = torsoStartRot + eased * fallDir * (Math.PI / 2);
-      } else {
-        enemy.mesh.rotation.z = eased * fallDir * (Math.PI / 2);
-      }
-      enemy.mesh.position.y = torsoStartY - eased * 0.5;
-
-      // Limb pieces: physics
-      partData.forEach(p => {
-        p.vel.y -= 15 * dt;
-        p.mesh.position.add(p.vel.clone().multiplyScalar(dt));
-        p.mesh.rotation.x += p.rotVel.x * dt;
-        p.mesh.rotation.y += p.rotVel.y * dt;
-        p.mesh.rotation.z += p.rotVel.z * dt;
-        // Floor bounce
-        if (p.mesh.position.y < 0.1) {
-          p.mesh.position.y = 0.1;
-          p.vel.y = Math.abs(p.vel.y) * 0.3;
-          p.vel.x *= 0.7;
-          p.vel.z *= 0.7;
-          p.rotVel.multiplyScalar(0.5);
-        }
-      });
-
-      // Particles: physics + fade
-      particles.forEach(p => {
-        p.vel.y -= 12 * dt;
-        p.mesh.position.add(p.vel.clone().multiplyScalar(dt));
-        if (p.mesh.position.y < 0.02) {
-          p.mesh.position.y = 0.02;
-          p.vel.y = Math.abs(p.vel.y) * 0.2;
-          p.vel.x *= 0.5;
-          p.vel.z *= 0.5;
-        }
-      });
-
-      // Fade out in last phase
-      if (elapsed > FADE_START) {
-        const fadeT = (elapsed - FADE_START) / (ANIM_DURATION - FADE_START);
-        const opacity = 1 - fadeT;
-        partData.forEach(p => {
-          p.mesh.traverse(child => {
-            if (child.isMesh) {
-              child.material.transparent = true;
-              child.material.opacity = opacity;
-            }
-          });
-        });
-        particles.forEach(p => {
-          p.mesh.material.transparent = true;
-          p.mesh.material.opacity = opacity;
-        });
-        enemy.mesh.traverse(child => {
-          if (child.isMesh) {
-            child.material.transparent = true;
-            child.material.opacity = opacity;
-          }
-        });
-      }
-
-      requestAnimationFrame(deathAnim);
-    }
-    deathAnim();
-  }
-
   function startReload() {
     if (isReloading || ammo === MAG_SIZE) return;
     isReloading = true;
@@ -1273,6 +1234,11 @@ canvas { display: block; }
       document.getElementById('reload-bar-container').style.display = 'none';
       updateAmmoDisplay();
     }
+  }
+
+  // 显示击杀数 / 死亡数
+  function updateKillDisplay() {
+    document.getElementById('kill-display').textContent = `K: ${kills}  D: ${deaths}`;
   }
 
   function updateAmmoDisplay() {
@@ -1297,80 +1263,14 @@ canvas { display: block; }
   }
 
   // ─── Enemy AI ───
-  function updateEnemies(dt) {
-    const now = performance.now();
-    enemies.forEach(enemy => {
-      if (!enemy.alive) return;
-
-      // Face player
-      const dx = playerPos.x - enemy.mesh.position.x;
-      const dz = playerPos.z - enemy.mesh.position.z;
-      const dist = Math.sqrt(dx * dx + dz * dz);
-      const angle = Math.atan2(dx, dz);
-      enemy.mesh.rotation.y = angle;
-
-      // HP bar faces camera
-      const hpBar = enemy.mesh.getObjectByName('hpBar');
-      if (hpBar) hpBar.lookAt(camera.position);
-      const hpBg = enemy.mesh.getObjectByName('hpBg');
-      if (hpBg) hpBg.lookAt(camera.position);
-
-      // Move toward player
-      if (dist > ENEMY_ATTACK_RANGE) {
-        const moveX = (dx / dist) * ENEMY_SPEED * dt;
-        const moveZ = (dz / dist) * ENEMY_SPEED * dt;
-        const newPos = enemy.mesh.position.clone();
-        newPos.x += moveX;
-        newPos.z += moveZ;
-
-        // Simple obstacle avoidance
-        const testBox = new THREE.Box3(
-          new THREE.Vector3(newPos.x - 0.4, 0, newPos.z - 0.4),
-          new THREE.Vector3(newPos.x + 0.4, 1.8, newPos.z + 0.4)
-        );
-        let blocked = false;
-        for (const obs of obstacles) {
-          if (new THREE.Box3().setFromObject(obs).intersectsBox(testBox)) { blocked = true; break; }
-        }
-        if (!blocked) {
-          enemy.mesh.position.x = newPos.x;
-          enemy.mesh.position.z = newPos.z;
-        }
-
-        // Walking animation
-        enemy.walkPhase += dt * 8;
-        const lLeg = enemy.mesh.getObjectByName('leftLeg');
-        const rLeg = enemy.mesh.getObjectByName('rightLeg');
-        const lArm = enemy.mesh.getObjectByName('leftArm');
-        const rArm = enemy.mesh.getObjectByName('rightArm');
-        if (lLeg && rLeg) {
-          lLeg.rotation.x = Math.sin(enemy.walkPhase) * 0.5;
-          rLeg.rotation.x = -Math.sin(enemy.walkPhase) * 0.5;
-        }
-        if (lArm) {
-          lArm.rotation.x = -Math.sin(enemy.walkPhase) * 0.4;
-        }
-        if (rArm) {
-          // Subtle sway on gun arm
-          rArm.rotation.x = -0.5 + Math.sin(enemy.walkPhase) * 0.1;
-        }
-      } else {
-        // Attack player
-        if (now - enemy.lastAttack > ENEMY_ATTACK_CD) {
-          enemy.lastAttack = now;
-          damagePlayer(ENEMY_DMG);
-        }
-      }
-    });
-  }
-
+  // 受到伤害：扣血，死亡时触发重生流程
   function damagePlayer(dmg) {
-    if (gameOver) return;
+    if (isDead) return;
     playerHP -= dmg;
     updateHPDisplay();
     playDamageSound();
 
-    // Red flash
+    // 红色闪烁
     const flash = document.getElementById('damage-flash');
     flash.style.background = 'rgba(255, 0, 0, 0.3)';
     setTimeout(() => flash.style.background = 'rgba(255, 0, 0, 0)', 150);
@@ -1378,47 +1278,68 @@ canvas { display: block; }
     if (playerHP <= 0) {
       playerHP = 0;
       updateHPDisplay();
-      triggerGameOver();
+      triggerDeath();
     }
   }
 
-  function triggerGameOver() {
-    gameOver = true;
-    document.exitPointerLock();
-    document.getElementById('final-kills').textContent = kills;
-    document.getElementById('gameover').style.display = 'flex';
+  // 死亡：通知其他玩家，显示倒计时，3 秒后重生
+  function triggerDeath() {
+    isDead = true;
+    deaths++;
+    playDeathSound();
+    updateKillDisplay();
+
+    // 通知所有人我被击杀（含击杀者 peerId，用于对方计分）
+    if (room && lastHitBy) {
+      room.publishTopic('kill', { killerPeerId: lastHitBy.peerId });
+    }
+
+    // 立即同步 alive=false
+    syncPresence();
+
+    // 显示重生倒计时
+    const overlay = document.getElementById('respawn-overlay');
+    const countdown = document.getElementById('respawn-countdown');
+    overlay.classList.add('active');
+    let sec = 3;
+    countdown.textContent = `Respawning in ${sec}...`;
+    const timer = setInterval(() => {
+      sec--;
+      if (sec > 0) {
+        countdown.textContent = `Respawning in ${sec}...`;
+      } else {
+        clearInterval(timer);
+        overlay.classList.remove('active');
+        respawnPlayer();
+      }
+    }, 1000);
   }
 
-  function restartGame() {
-    gameOver = false;
+  // 重生：重置状态，随机位置出生
+  function respawnPlayer() {
+    const spawnPos = getRandomSpawnPos();
+    playerPos.set(spawnPos.x, PLAYER_HEIGHT, spawnPos.z);
+    playerVelocityY = 0;
+    isOnGround = true;
     playerHP = 100;
     ammo = MAG_SIZE;
     reserve = MAG_SIZE * 3;
-    kills = 0;
     isReloading = false;
-    playerPos.set(0, PLAYER_HEIGHT, 0);
-    euler.set(0, 0, 0);
-    camera.quaternion.setFromEuler(euler);
-    playerVelocityY = 0;
-    isOnGround = true;
+    isDead = false;
+    lastHitBy = null;
 
     updateHPDisplay();
     updateAmmoDisplay();
-    document.getElementById('kill-display').textContent = 'Kills: 0';
-    document.getElementById('gameover').style.display = 'none';
-    document.getElementById('reload-bar-container').style.display = 'none';
+    syncPresence(); // 立即广播 alive=true
+  }
 
-    // Reset enemies
-    enemies.forEach(e => { scene.remove(e.mesh); });
-    enemies.length = 0;
-    spawnAllEnemies();
-
-    renderer.domElement.requestPointerLock();
+  // 兼容旧 restartGame 引用
+  function restartGame() {
   }
 
   // ─── Game Loop ───
   function update() {
-    if (gameOver) { renderer.render(scene, camera); requestAnimationFrame(update); return; }
+    if (isDead) { renderer.render(scene, camera); requestAnimationFrame(update); return; }
     const dt = Math.min(clock.getDelta(), 0.05);
 
     // Player movement
@@ -1480,8 +1401,9 @@ canvas { display: block; }
       camera.position.copy(playerPos);
     }
 
-    updateEnemies(dt);
     updateReload();
+    syncPresence();
+    updatePeers(dt);
 
     // Update viewmodel (check if player is moving)
     const isMoving = keys['KeyW'] || keys['KeyS'] || keys['KeyA'] || keys['KeyD'];
@@ -1495,7 +1417,7 @@ canvas { display: block; }
   init();
   update();
 
-})();
+}
 </script>
 </body>
 </html>
