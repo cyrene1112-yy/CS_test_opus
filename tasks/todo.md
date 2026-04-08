@@ -1,20 +1,32 @@
-# Instant Multiplayer 改造计划
+# 地图列表页改造计划
 
 ## 执行步骤
 
-- [x] 1. HTML 结构改造：`<script type="module">`，添加 Instant CDN import，开始界面加入名称输入框
-- [x] 2. 删除所有 AI 逻辑：`enemies[]`、`spawnEnemy()`、`spawnAllEnemies()`、`updateEnemies()`、`respawnEnemy()` 及相关调用
-- [x] 3. 新增多人状态管理：`peerMeshes{}`、`peerTargets{}`、`myPeerId`、`myName` 等变量
-- [x] 4. 实现 `initMultiplayer()`：`joinRoom` + `subscribePresence`（peer 增删 mesh）+ `subscribeTopic`（shoot/hit/kill）
-- [x] 5. 实现 `syncPresence()`：50ms 节流发布本地玩家 pos/rot/hp/alive
-- [x] 6. 改造 `shoot()`：Raycast 检测命中远端玩家 mesh → `publishTopic('hit', ...)`
-- [x] 7. 实现命中接收：收到 hit topic 且 targetId === 自己 → 扣血/死亡/重生
-- [x] 8. 远端玩家渲染：subscribePresence 回调中插值更新位置/朝向，alive=false 时播放死亡动画
-- [x] 9. 验证：浏览器双开测试多人同步
+- [x] 1. 创建 `instant.schema.ts`：定义 `maps` namespace（name, description, createdAt）
+- [x] 2. 创建 `instant.perms.ts`：view=true，create/update/delete=false
+- [x] 3. 运行 `npx instant-cli@latest push` 推送 schema + 权限
+- [x] 4. 创建 `tasks/seed-maps.js`：Admin SDK 写入 5 张地图
+- [x] 5. 运行 seed 脚本，验证数据写入成功
+- [x] 6. 修改 `index.html`：添加地图列表页 HTML 结构 + CSS 多边形风格
+- [x] 7. 修改 `index.html`：添加 JS 逻辑（fetchMaps + 地图选择流程）
+- [x] 8. 修改 `index.html`：`joinRoom` 改用 `mapId` 替换 `'arena-1'`
+- [x] 9. 浏览器验证：地图列表正常加载、选择后进入游戏、多人同一地图同步
+
+## 地图数据
+
+| 名称 | 描述 |
+|---|---|
+| Dust Protocol | Arid desert industrial compound, scarred by gunfire |
+| Neon Vertigo | Cyberpunk rooftop district, neon fog and narrow catwalks |
+| Iron Bastion | Abandoned military fortress, reinforced concrete ruins |
+| Hollow Ridge | Mountain canyon outpost, echoes carry every shot |
+| Static Void | Derelict space station, zero-gravity corridors |
 
 ## Review
 
-所有步骤完成，测试通过。
+所有步骤完成，浏览器验证通过。
 
-**踩坑记录：**
-- `@instantdb/core` 通过 esm.sh 的命名导入（`import { init }`）在浏览器中失效，需改为 namespace import（`import * as InstantCore`）再访问 `InstantCore.init()`
+**交付内容：**
+- `instant.schema.ts` + `instant.perms.ts`：maps namespace，view=true，写权限全关
+- `tasks/seed-maps.js`：Admin SDK 种子脚本，写入 5 张地图
+- `index.html`：两步进入流程（名字 → 地图选择 → 游戏），CS 多边形风格 UI，joinRoom 改用 mapId

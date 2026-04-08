@@ -132,19 +132,242 @@ canvas { display: block; }
   height: 100%; width: 0; background: #ff4; border-radius: 3px;
   transition: width 0.05s linear;
 }
+
+/* ───────────────────────────────────────
+   地图选择界面 — 多边形 CS 风格
+─────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;700&display=swap');
+
+#map-select-screen {
+  display: none;                /* 由 JS 控制显示 */
+  position: fixed; inset: 0; z-index: 110;
+  background: #06080a;
+  font-family: 'Rajdhani', 'Segoe UI', sans-serif;
+  overflow-y: auto;
+}
+
+/* 扫描线背景纹理 */
+#map-select-screen::before {
+  content: '';
+  position: fixed; inset: 0; pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,255,80,0.02) 2px,
+    rgba(0,255,80,0.02) 4px
+  );
+}
+
+/* 顶部标题栏 */
+.ms-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 24px 48px 12px;
+  border-bottom: 1px solid rgba(0,255,80,0.2);
+  position: relative;
+}
+.ms-header::after {
+  content: '';
+  position: absolute; bottom: -3px; left: 48px; right: 48px;
+  height: 1px; background: rgba(0,255,80,0.08);
+}
+.ms-logo {
+  font-size: 28px; font-weight: 700; letter-spacing: 6px;
+  color: #00ff50; text-shadow: 0 0 16px rgba(0,255,80,0.6);
+  clip-path: polygon(8px 0%, 100% 0%, calc(100% - 8px) 100%, 0% 100%);
+  background: rgba(0,255,80,0.06); padding: 4px 20px;
+}
+.ms-subtitle {
+  font-size: 13px; letter-spacing: 4px; color: #3a5c40;
+  text-transform: uppercase;
+}
+
+/* 玩家名字区 */
+.ms-player-row {
+  display: flex; align-items: center; gap: 16px;
+  padding: 20px 48px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.ms-player-label {
+  font-size: 13px; letter-spacing: 3px; color: #3a5c40; text-transform: uppercase;
+}
+#ms-name-input {
+  background: transparent;
+  border: none; border-bottom: 2px solid rgba(0,255,80,0.4);
+  color: #00ff50; font-family: inherit; font-size: 18px; font-weight: 700;
+  letter-spacing: 2px; outline: none; width: 200px; padding: 4px 0;
+}
+#ms-name-input::placeholder { color: #2a4a30; }
+#ms-name-input:focus { border-bottom-color: #00ff50; }
+
+/* 地图列表区域 */
+.ms-body {
+  padding: 32px 48px;
+}
+.ms-section-title {
+  font-size: 11px; letter-spacing: 5px; color: #3a5c40;
+  text-transform: uppercase; margin-bottom: 20px;
+  display: flex; align-items: center; gap: 12px;
+}
+.ms-section-title::after {
+  content: ''; flex: 1; height: 1px; background: rgba(0,255,80,0.12);
+}
+
+/* 地图卡片列表 */
+.ms-map-list {
+  display: flex; flex-direction: column; gap: 4px;
+}
+
+/* 单张地图条目 */
+.ms-map-item {
+  display: flex; align-items: center;
+  padding: 0 24px;
+  height: 72px;
+  cursor: pointer;
+  position: relative;
+  background: rgba(255,255,255,0.02);
+  /* 左上+右下斜切角，多边形感 */
+  clip-path: polygon(16px 0%, 100% 0%, calc(100% - 16px) 100%, 0% 100%);
+  transition: background 0.15s, clip-path 0.15s;
+  border-left: 3px solid transparent;
+}
+.ms-map-item::before {
+  content: '';
+  position: absolute; left: 0; top: 0; bottom: 0;
+  width: 3px; background: transparent;
+  transition: background 0.15s;
+}
+.ms-map-item:hover {
+  background: rgba(0,255,80,0.06);
+  clip-path: polygon(12px 0%, 100% 0%, calc(100% - 12px) 100%, 0% 100%);
+}
+.ms-map-item:hover::before { background: #00ff50; }
+
+/* 已选中的地图 */
+.ms-map-item.selected {
+  background: rgba(0,255,80,0.12);
+  clip-path: polygon(12px 0%, 100% 0%, calc(100% - 12px) 100%, 0% 100%);
+}
+.ms-map-item.selected::before { background: #00ff50; }
+
+/* 地图序号菱形 */
+.ms-map-index {
+  width: 32px; height: 32px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0,255,80,0.08);
+  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+  font-size: 13px; font-weight: 700; color: #3a8a50;
+  margin-right: 20px; flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+.ms-map-item:hover .ms-map-index,
+.ms-map-item.selected .ms-map-index {
+  background: rgba(0,255,80,0.25); color: #00ff50;
+}
+
+/* 地图名称+描述 */
+.ms-map-info { flex: 1; }
+.ms-map-name {
+  font-size: 20px; font-weight: 700; letter-spacing: 2px;
+  color: #c8d8cc; line-height: 1;
+  transition: color 0.15s;
+}
+.ms-map-item:hover .ms-map-name,
+.ms-map-item.selected .ms-map-name { color: #00ff50; }
+.ms-map-desc {
+  font-size: 12px; letter-spacing: 1px; color: #3a5c40;
+  margin-top: 4px; line-height: 1;
+}
+
+/* 加载状态 */
+.ms-map-loading {
+  color: #2a4a30; font-size: 14px; letter-spacing: 3px;
+  padding: 32px 0;
+}
+
+/* 底部进入按钮 */
+.ms-footer {
+  padding: 24px 48px 32px;
+  display: flex; justify-content: flex-end; align-items: center; gap: 24px;
+  border-top: 1px solid rgba(0,255,80,0.1);
+}
+.ms-selected-label {
+  font-size: 13px; letter-spacing: 2px; color: #3a5c40;
+}
+.ms-selected-name {
+  color: #00ff50; font-weight: 700;
+}
+
+/* 进入按钮 — 六边形多边形 */
+#ms-enter-btn {
+  padding: 14px 48px;
+  background: #00ff50; color: #030a05;
+  font-family: inherit; font-size: 16px; font-weight: 700;
+  letter-spacing: 4px; text-transform: uppercase;
+  border: none; cursor: pointer;
+  clip-path: polygon(16px 0%, 100% 0%, calc(100% - 16px) 100%, 0% 100%);
+  transition: background 0.15s, transform 0.1s;
+  pointer-events: all;
+}
+#ms-enter-btn:hover { background: #40ffaa; transform: scaleX(1.02); }
+#ms-enter-btn:disabled {
+  background: #1a2e20; color: #2a4a30; cursor: not-allowed; transform: none;
+}
+
+/* 装饰六边形（纯CSS，右下角） */
+.ms-deco {
+  position: fixed; right: -60px; bottom: -60px;
+  width: 260px; height: 260px; pointer-events: none; opacity: 0.04;
+  background: #00ff50;
+  clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
+}
 </style>
 </head>
 <body>
 
+<!-- 第一步：输入名字 -->
 <div id="blocker">
   <div class="content">
     <h1>CS CLONE</h1>
     <input id="name-input" type="text" maxlength="16" placeholder="输入你的名字" autocomplete="off" />
-    <button id="play-btn">进入游戏</button>
+    <button id="play-btn">选择地图 →</button>
     <div class="keys">
       WASD - Move &nbsp;|&nbsp; Mouse - Look &nbsp;|&nbsp; Click - Shoot<br>
       Space - Jump &nbsp;|&nbsp; R - Reload &nbsp;|&nbsp; Shift - Sprint
     </div>
+  </div>
+</div>
+
+<!-- 第二步：地图选择 -->
+<div id="map-select-screen">
+  <div class="ms-deco"></div>
+
+  <!-- 顶部标题 -->
+  <div class="ms-header">
+    <div class="ms-logo">CS CLONE</div>
+    <div class="ms-subtitle">Map Selection</div>
+  </div>
+
+  <!-- 玩家名字行 -->
+  <div class="ms-player-row">
+    <span class="ms-player-label">Player</span>
+    <input id="ms-name-input" type="text" maxlength="16" placeholder="ANONYMOUS" autocomplete="off" />
+  </div>
+
+  <!-- 地图列表 -->
+  <div class="ms-body">
+    <div class="ms-section-title">Available Maps</div>
+    <div class="ms-map-list" id="ms-map-list">
+      <div class="ms-map-loading">// Loading maps...</div>
+    </div>
+  </div>
+
+  <!-- 底部操作栏 -->
+  <div class="ms-footer">
+    <div class="ms-selected-label">
+      Selected: <span class="ms-selected-name" id="ms-selected-label">—</span>
+    </div>
+    <button id="ms-enter-btn" disabled>ENTER MAP</button>
   </div>
 </div>
 
@@ -928,24 +1151,123 @@ const INSTANT_APP_ID = 'f633fd9a-3334-4703-9104-a3ceb3e488b5';
   // ─── Controls ───
   function setupControls() {
     const blocker = document.getElementById('blocker');
+    const mapSelectScreen = document.getElementById('map-select-screen');
 
-    // 点击"进入游戏"按钮：读取名字 → 初始化多人 → 请求指针锁定
+    // ─── 地图选择页逻辑 ───
+
+    let selectedMapId = null;    // 当前选中的地图 ID
+    let selectedMapName = null;  // 当前选中的地图名称
+
+    // 从 InstantDB 拉取地图列表（只读查询，无需登录）
+    async function loadMaps() {
+      const db = InstantCore.init({ appId: INSTANT_APP_ID });
+      const listEl = document.getElementById('ms-map-list');
+
+      // 订阅 maps 集合，实时更新
+      db.subscribeQuery({ maps: {} }, ({ data, error }) => {
+        if (error) {
+          listEl.innerHTML = '<div class="ms-map-loading" style="color:#f33">// Failed to load maps</div>';
+          return;
+        }
+        if (!data || !data.maps || data.maps.length === 0) {
+          listEl.innerHTML = '<div class="ms-map-loading">// No maps found</div>';
+          return;
+        }
+
+        // 按 createdAt 排序，渲染地图条目
+        const sorted = [...data.maps].sort((a, b) => a.createdAt - b.createdAt);
+        listEl.innerHTML = '';
+        sorted.forEach((map, idx) => {
+          const item = document.createElement('div');
+          item.className = 'ms-map-item';
+          item.dataset.mapId = map.id;
+          item.dataset.mapName = map.name;
+          item.innerHTML = `
+            <div class="ms-map-index">${String(idx + 1).padStart(2, '0')}</div>
+            <div class="ms-map-info">
+              <div class="ms-map-name">${map.name}</div>
+              <div class="ms-map-desc">${map.description}</div>
+            </div>
+          `;
+          // 点击选中
+          item.addEventListener('click', () => {
+            document.querySelectorAll('.ms-map-item').forEach(el => el.classList.remove('selected'));
+            item.classList.add('selected');
+            selectedMapId = map.id;
+            selectedMapName = map.name;
+            document.getElementById('ms-selected-label').textContent = map.name;
+            document.getElementById('ms-enter-btn').disabled = false;
+          });
+          listEl.appendChild(item);
+        });
+      });
+    }
+
+    // 第一步：输入名字 → 进入地图选择页
     document.getElementById('play-btn').addEventListener('click', () => {
       const input = document.getElementById('name-input').value.trim();
-      myName = input || ('Player' + Math.floor(Math.random() * 1000));
-      initAudio();
-      initMultiplayer();
-      renderer.domElement.requestPointerLock();
+      const resolvedName = input || ('Player' + Math.floor(Math.random() * 1000));
+      myName = resolvedName;
+
+      // 把名字同步到地图选择页输入框
+      document.getElementById('ms-name-input').value = resolvedName;
+
+      // 隐藏初始界面，显示地图选择页
+      blocker.style.display = 'none';
+      mapSelectScreen.style.display = 'block';
+
+      // 拉取地图
+      loadMaps();
     });
 
-    // Enter 键也可以触发进入
+    // Enter 键触发进入地图选择页
     document.getElementById('name-input').addEventListener('keydown', (e) => {
       if (e.code === 'Enter') document.getElementById('play-btn').click();
     });
 
+    // 地图选择页：名字输入框同步（允许用户在此修改名字）
+    document.getElementById('ms-name-input').addEventListener('input', (e) => {
+      const v = e.target.value.trim();
+      if (v) myName = v;
+    });
+
+    // 第二步：选好地图后点击进入
+    document.getElementById('ms-enter-btn').addEventListener('click', () => {
+      if (!selectedMapId) return;
+
+      // 从地图选择页读取最终名字
+      const finalName = document.getElementById('ms-name-input').value.trim();
+      if (finalName) myName = finalName;
+
+      // 隐藏地图选择页，进入游戏
+      mapSelectScreen.style.display = 'none';
+
+      gameStarted = true;
+      initAudio();
+      initMultiplayer(selectedMapId);        // 传入地图 ID 作为房间标识
+      renderer.domElement.requestPointerLock();
+    });
+
+    // 标记游戏是否已经开始（进入游戏后 blocker 不再是初始界面）
+    let gameStarted = false;
+
     document.addEventListener('pointerlockchange', () => {
       isLocked = document.pointerLockElement === renderer.domElement;
-      blocker.style.display = isLocked ? 'none' : 'flex';
+      if (!isLocked) {
+        // 游戏进行中按 Esc：显示"点击继续"提示，而非名字输入界面
+        if (gameStarted) {
+          blocker.querySelector('.content').innerHTML =
+            '<h1>CS CLONE</h1><p style="color:#ccc;font-size:18px">Click to continue</p>';
+        }
+        blocker.style.display = 'flex';
+      }
+    });
+
+    // 游戏中点击 blocker 重新锁定
+    blocker.addEventListener('click', (e) => {
+      if (gameStarted && !isLocked) {
+        renderer.domElement.requestPointerLock();
+      }
     });
 
     document.addEventListener('mousemove', (e) => {
@@ -969,10 +1291,11 @@ const INSTANT_APP_ID = 'f633fd9a-3334-4703-9104-a3ceb3e488b5';
   }
 
   // ─── 多人：初始化 InstantDB 房间 ───
-  function initMultiplayer() {
+  // mapId：使用地图的数据库 ID 作为 presence 房间标识，同一地图的玩家共享同一房间
+  function initMultiplayer(mapId) {
     const db = InstantCore.init({ appId: INSTANT_APP_ID });
-    // 所有玩家加入同一个房间 "game"
-    room = db.joinRoom('game', 'arena-1');
+    // 用地图 ID 作为房间标识，不同地图的玩家互不干扰
+    room = db.joinRoom('game', mapId);
 
     // 订阅 presence：感知同房间内所有玩家的状态变化
     room.subscribePresence({}, (response) => {
@@ -1013,11 +1336,12 @@ const INSTANT_APP_ID = 'f633fd9a-3334-4703-9104-a3ceb3e488b5';
     });
 
     // 订阅 hit topic：收到命中事件后自己扣血
-    room.subscribeTopic('hit', (event, senderPresence) => {
-      if (event.targetId !== myPeerId) return;
+    room.subscribeTopic('hit', (event) => {
+      // myPeerId 可能尚未初始化（presence 未到），此时跳过而不是误判
+      if (!myPeerId || event.targetId !== myPeerId) return;
       if (isDead) return;
-      // 记录击中我的玩家，用于死亡时发 kill 事件
-      lastHitBy = { peerId: senderPresence.peerId, name: senderPresence.name || 'Unknown' };
+      // 记录击中我的玩家，用于死亡时发 kill 事件（使用事件中携带的数据，不依赖 senderPresence）
+      lastHitBy = { peerId: event.shooterId || null, name: event.shooterName || 'Unknown' };
       damagePlayer(event.damage);
     });
 
@@ -1161,8 +1485,8 @@ const INSTANT_APP_ID = 'f633fd9a-3334-4703-9104-a3ceb3e488b5';
         if (isHeadshot) playHeadshotSound();
         showHitmarker();
         createBloodEffect(hit.point);
-        // 通知目标扣血
-        room.publishTopic('hit', { targetId: hitPeerId, damage: dmg, isHeadshot });
+        // 通知目标扣血，附带自己的 peerId 和名字（避免依赖 senderPresence）
+        room.publishTopic('hit', { targetId: hitPeerId, damage: dmg, isHeadshot, shooterId: myPeerId, shooterName: myName });
       }
     }
 

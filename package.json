@@ -1,0 +1,9 @@
+{
+  "name": "csfps",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "@instantdb/admin": "^0.22.185",
+    "@instantdb/core": "^0.22.185"
+  }
+}
